@@ -117,8 +117,6 @@ async function serveHandler(req: Request): Promise<Response> {
     await page.setViewportSize({ width, height });
 
     await page.waitForNetworkIdle();
-    await new Promise((event) => setTimeout(event, 720)); // Gravatar
-    await page.waitForNetworkIdle();
 
     const webp = await page.screenshot({ format: "webp" });
 
