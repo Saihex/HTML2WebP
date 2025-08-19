@@ -79,12 +79,13 @@ async function serveHandler(req: Request): Promise<Response> {
       page = await acquirePage();
       page.goto("file://runtime_health.html");
       await page.waitForNetworkIdle();
+      await releasePage(page)
       return new Response("Everything is well!", {
         status: 200,
       });
     } catch (e) {
       try {
-        await page?.close();
+        if (page) await releasePage(page)
       } catch (_) {
         //
       }
