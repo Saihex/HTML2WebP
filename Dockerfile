@@ -10,7 +10,7 @@ FROM debian:bookworm-slim
 
 WORKDIR /
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
     ca-certificates \
     fonts-noto-core \
     fonts-roboto \
