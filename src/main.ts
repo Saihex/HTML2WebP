@@ -1,21 +1,29 @@
-import { TemplateParser } from "~/src/parser.ts";
-import { launch, Page } from "@astral/astral";
+import { page_pool } from "~/src/classes/page_pool.ts";
+import { createdeferred } from "./utils/deferred.ts";
+import { TemplateParser } from "./classes/parser.ts";
+import { launch } from "@astral/astral";
+import * as pretty_print from "saihex/pretty_logs";
+import {
+  request_cache,
+  request_structure,
+} from "~/src/types/request_struct.ts";
+import { fetchMapWithLimit } from "~/src/utils/multifetcher.ts";
 const abortController = new AbortController();
 
-const MAX_PAGES = 5;
-const pageQueue: (() => void)[] = [];
+const RequestCache: Map<string, request_cache> = new Map();
+const ReqCacheMaxAgeSeconds = 1200;
 
 const browser = await launch({
   headless: true,
+  userAgent: "HTML2WebP",
   args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  path: "/usr/bin/chromium",
 });
 
-if (Deno.args.includes("--setup")) {
-  Deno.exit(0);
-}
+const PAGE_POOL = new page_pool(browser);
 
 const TWEMOJI_SCRIPT = `
-<script src="https://unpkg.com/twemoji@latest/dist/twemoji.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/twemoji@latest/dist/twemoji.min.js" crossorigin="anonymous" preload></script>
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     twemoji.parse(document.body, {
@@ -35,57 +43,44 @@ const TWEMOJI_SCRIPT = `
 </script>
 `;
 
-async function acquirePage(): Promise<Page> {
-  if (pageQueue.length >= MAX_PAGES) {
-    await new Promise<void>((resolve) => pageQueue.push(resolve));
-  }
-  const page = await browser.newPage();
-  return page;
-}
-
-async function releasePage(page: Page) {
-  await page.close();
-  const next = pageQueue.shift();
-  if (next) next();
-}
-
-interface request_structure {
-  html: string;
-  width?: number;
-  height?: number;
-  values: Record<string, string>;
-}
-
 function safeViewport(width?: unknown, height?: unknown) {
   const defaultWidth = 1700;
   const defaultHeight = 893;
 
-  const safeWidth = typeof width === "number" && !isNaN(width)
-    ? width
-    : defaultWidth;
-  const safeHeight = typeof height === "number" && !isNaN(height)
-    ? height
-    : defaultHeight;
+  const safeWidth =
+    typeof width === "number" && !isNaN(width) && width > 0 && width <= 5120
+      ? width
+      : defaultWidth;
+  const safeHeight =
+    typeof height === "number" && !isNaN(height) && height > 0 && height <= 5120
+      ? height
+      : defaultHeight;
 
   return { width: safeWidth, height: safeHeight };
 }
 
 async function serveHandler(req: Request): Promise<Response> {
+  if (req.method !== "POST") {
+    return new Response(null, {
+      status: 405,
+    });
+  }
+
   const _url = new URL(req.url);
   if (_url.pathname === "/health") {
     let page;
 
     try {
-      page = await acquirePage();
+      page = await PAGE_POOL.acquirePage();
       page.goto("file://runtime_health.html");
       await page.waitForNetworkIdle();
-      await releasePage(page)
+      await PAGE_POOL.releasePage(page);
       return new Response("Everything is well!", {
         status: 200,
       });
     } catch (e) {
       try {
-        if (page) await releasePage(page)
+        if (page) await PAGE_POOL.releasePage(page);
       } catch (_) {
         //
       }
@@ -105,12 +100,60 @@ async function serveHandler(req: Request): Promise<Response> {
     });
   }
 
+  const ongoingSimilar = body.cache_id
+    ? RequestCache.get(`${body.cache_id}`)
+    : undefined;
+
+  if (
+    ongoingSimilar &&
+    Date.now() - ongoingSimilar.timestamp <= ReqCacheMaxAgeSeconds * 1000
+  ) {
+    const res = await ongoingSimilar.promise;
+
+    if (res instanceof Error) {
+      pretty_print.logWarning(`CACHE ERROR: ${body.cache_id} cache errored.`);
+      return new Response("Parenting Request Failed", {
+        status: 500,
+      });
+    }
+
+    return new Response(res, {
+      status: 200,
+      headers: {
+        "Content-Type": "image/webp",
+      },
+    });
+  }
+
+  const _promise = createdeferred<Uint8Array | Error>();
+
+  if (typeof body.cache_id === "string") {
+    const register: request_cache = {
+      promise: _promise.promise,
+      timestamp: Date.now(),
+    };
+
+    RequestCache.set(body.cache_id, register);
+  }
+
+  if (body.image_values && Array.isArray(body.image_values)) {
+    const toFetch: Record<string, string> = {};
+
+    for (const key of body.image_values) {
+      toFetch[key] = body.values[key];
+    }
+
+    const blobs = await fetchMapWithLimit(toFetch, 5);
+
+    Object.assign(body.values, blobs);
+  }
+
   const parser = new TemplateParser(body.html);
   const result = parser.render(body.values);
 
-  const page = await acquirePage();
+  const page = await PAGE_POOL.acquirePage();
+
   try {
-    await page.setUserAgent("HTML2WebP");
     await page.setContent(`${result}${TWEMOJI_SCRIPT}`);
 
     const { width, height } = safeViewport(body.width, body.height);
@@ -120,6 +163,8 @@ async function serveHandler(req: Request): Promise<Response> {
 
     const webp = await page.screenshot({ format: "webp" });
 
+    _promise.resolve(webp);
+
     return new Response(webp, {
       status: 200,
       headers: {
@@ -127,22 +172,53 @@ async function serveHandler(req: Request): Promise<Response> {
       },
     });
   } catch (e) {
-    return new Response(`${e}`, {
+    _promise.reject(new Error());
+
+    if (typeof body.cache_id === "string") {
+      RequestCache.delete(body.cache_id);
+    }
+
+    return new Response(`RENDER ERROR: ${e}`, {
       status: 500,
     });
   } finally {
-    await releasePage(page);
+    await PAGE_POOL.releasePage(page);
   }
 }
 
 ///
+
+(async () => {
+  while (true) {
+    await new Promise((event) => {
+      setTimeout(event, 60 * 1000);
+    });
+
+    const now = Date.now();
+    let cleared = 0;
+
+    for (const [key, val] of RequestCache) {
+      try {
+        if (now - val.timestamp < ReqCacheMaxAgeSeconds * 1000) continue;
+        RequestCache.delete(key);
+        cleared++;
+      } catch (_) {
+        //
+      }
+    }
+
+    if (cleared > 0) {
+      pretty_print.logSuccess(`Cleared ${cleared} render caches`);
+    }
+  }
+})();
 
 {
   // 48 hours → milliseconds
   const RESTART_INTERVAL = 48 * 60 * 60 * 1000; // more readable than 3.6e+6
 
   setTimeout(async () => {
-    console.log("♻️ RESTARTING NOW: 48-hour auto-restart triggered");
+    pretty_print.log("♻️ RESTARTING NOW: 48-hour auto-restart triggered");
 
     try {
       await browser.close();

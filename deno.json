@@ -1,11 +1,12 @@
 {
   "tasks": {
-    "dev": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run --watch src/main.ts",
-    "build": "deno compile --allow-read --allow-write --allow-net --allow-env --allow-run --output /app/output/HTML2WebP src/main.ts"
+    "dev": "deno run --allow-import --allow-read --allow-write --allow-net --allow-env --allow-run --watch src/main.ts",
+    "build": "deno compile --allow-import --allow-read --allow-write --allow-net --allow-env --allow-run --output /app/output/HTML2WebP src/main.ts"
   },
   "imports": {
     "@astral/astral": "jsr:@astral/astral@^0.5.3",
     "~/": "./",
-    "@std/assert": "jsr:@std/assert@1"
+    "@std/assert": "jsr:@std/assert@1",
+    "saihex/pretty_logs": "https://s3.saihex.com/deno-libs/pretty_logs.ts"
   }
 }

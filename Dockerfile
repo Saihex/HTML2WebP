@@ -3,24 +3,29 @@ FROM denoland/deno:latest AS builder
 WORKDIR /app
 COPY . .
 
-RUN deno install
+RUN deno install --allow-import
 RUN deno task build
 
 FROM debian:bookworm-slim
 
 WORKDIR /
 
-RUN apt-get update && apt-get install -y curl wget gnupg \
-&& wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-&& sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
-&& apt-get update && apt-get install -y google-chrome-stable fonts-noto-core fonts-noto-extra fonts-noto-ui-core fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 --no-install-recommends \
-&& rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y fonts-noto-core fonts-roboto chromium && rm -rf /var/lib/apt/lists/*
+COPY --chown=root:root local.conf /etc/fonts/local.conf
+RUN chmod 444 /etc/fonts/local.conf
 
-COPY --from=builder /app/output/HTML2WebP /usr/local/bin/HTML2WebP
-COPY ./LICENSE /usr/local/bin/HTML2WebP_LICENSE
-COPY ./runtime_health.html /runtime_health.html
+COPY --chown=root:root --from=builder /app/output/HTML2WebP /usr/local/bin/HTML2WebP
+COPY --chown=root:root ./LICENSE /HTML2WebP_LICENSE
+COPY --chown=root:root ./runtime_health.html /runtime_health.html
 
-RUN HTML2WebP --setup
+RUN chmod 555 /usr/local/bin/HTML2WebP
+RUN chmod 444 /HTML2WebP_LICENSE
+RUN chmod 444 /runtime_health.html
+
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
+USER appuser
+
+WORKDIR /home/appuser
 
 EXPOSE 8080
 CMD ["HTML2WebP"]
