@@ -10,7 +10,16 @@ FROM debian:bookworm-slim
 
 WORKDIR /
 
-RUN apt-get update && apt-get install -y fonts-noto-core fonts-roboto chromium && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    fonts-noto-core \
+    fonts-roboto \
+    libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 \
+    libdrm2 libx11-6 libx11-xcb1 libxcomposite1 libxcursor1 \
+    libxdamage1 libxext6 libxi6 libxrandr2 libxrender1 libxss1 \
+    libxtst6 libnss3 libasound2 libglib2.0-0 libgbm1 libgtk-3-0 \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
 COPY --chown=root:root local.conf /etc/fonts/local.conf
 RUN chmod 444 /etc/fonts/local.conf
 
@@ -26,6 +35,9 @@ RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 USER appuser
 
 WORKDIR /home/appuser
+ENV HOME=/home/appuser
+
+RUN HTML2WebP --setup-only
 
 EXPOSE 8080
 CMD ["HTML2WebP"]

@@ -14,11 +14,20 @@ const RequestCache: Map<string, request_cache> = new Map();
 const ReqCacheMaxAgeSeconds = 1200;
 
 const browser = await launch({
-  headless: true,
   userAgent: "HTML2WebP",
-  args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  path: "/usr/bin/chromium",
+  args: [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+  ],
+  headless: true,
 });
+
+if (Deno.args.includes("--setup-only")) {
+  await browser.close();
+  Deno.exit(0);
+}
 
 const PAGE_POOL = new page_pool(browser);
 
