@@ -269,4 +269,8 @@ function setupGracefulShutdown() {
 
 setupGracefulShutdown();
 
-Deno.serve({ port: 8080, signal: abortController.signal }, serveHandler);
+Deno.serve({
+  port: 8080,
+  hostname: Deno.env.get("HOSTNAME") ?? "0.0.0.0",
+  signal: abortController.signal,
+}, serveHandler);
